@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/KarpelesLab/hid"
 	"github.com/chzyer/readline"
-	"github.com/zserge/hid"
 )
 
 func shell(device hid.Device) {

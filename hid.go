@@ -27,15 +27,19 @@ type Info struct {
 //
 type Device interface {
 	Open() error
-	Close()
+	Close() error
 	Info() Info
 	HIDReport() ([]byte, error)
 	SetReport(int, []byte) error
+	SetOutputReport(int, []byte) error
+	SetFeatureReport(int, []byte) error
 	GetReport(int) ([]byte, error)
-	Read(size int, ms time.Duration) ([]byte, error)
+	ReadInputPacket(timeout time.Duration) ([]byte, error)
+	Read(buf []byte, ms time.Duration) (int, error)
 	Write(data []byte, ms time.Duration) (int, error)
 	Ctrl(rtype, req, val, index int, data []byte, t int) (int, error)
 }
 
 // Default Logger setting
+//var Logger = log.New(log.Writer(), "hid", log.LstdFlags)
 var Logger = log.New(ioutil.Discard, "hid", log.LstdFlags)

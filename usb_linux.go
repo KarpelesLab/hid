@@ -39,12 +39,13 @@ func (hid *usbDevice) Open() (err error) {
 	}
 }
 
-func (hid *usbDevice) Close() {
+func (hid *usbDevice) Close() error {
 	if hid.f != nil {
 		hid.release()
 		hid.f.Close()
 		hid.f = nil
 	}
+	return nil
 }
 
 func (hid *usbDevice) Info() Info {
@@ -69,6 +70,7 @@ func (hid *usbDevice) claim() error {
 		IoctlCode: USBDEVFS_DISCONNECT,
 		Data:      0,
 	}); r == -1 {
+		// this typically means there was no driver on the usb device
 		Logger.Println("driver disconnect failed:", r, errno)
 	}
 
@@ -124,22 +126,23 @@ func (hid *usbDevice) intr(ep int, data []byte, t int) (int, error) {
 	}); r == -1 {
 		return -1, err
 	} else {
+		time.Sleep(100 * time.Millisecond)
 		return r, nil
 	}
 }
 
-func (hid *usbDevice) Read(size int, timeout time.Duration) ([]byte, error) {
-	if size < 0 {
-		size = int(hid.inputPacketSize)
-	}
-	data := make([]byte, size, size)
-	ms := timeout / (1 * time.Millisecond)
-	n, err := hid.intr(hid.epIn, data, int(ms))
-	if err == nil {
-		return data[:n], nil
-	} else {
+func (hid *usbDevice) ReadInputPacket(timeout time.Duration) ([]byte, error) {
+	buf := make([]byte, hid.inputPacketSize)
+	n, err := hid.Read(buf, timeout)
+	if err != nil {
 		return nil, err
 	}
+	return buf[:n], nil
+}
+
+func (hid *usbDevice) Read(data []byte, timeout time.Duration) (int, error) {
+	ms := timeout / (1 * time.Millisecond)
+	return hid.intr(hid.epIn, data, int(ms))
 }
 
 func (hid *usbDevice) Write(data []byte, timeout time.Duration) (int, error) {
@@ -175,8 +178,17 @@ func (hid *usbDevice) GetReport(report int) ([]byte, error) {
 
 func (hid *usbDevice) SetReport(report int, data []byte) error {
 	// 00100001, SET_REPORT, type*256+id, intf, len, data
-	_, err := hid.ctrl(0x21, 0x09, 3<<8+report, int(hid.info.Interface), data, 1000)
+	_, err := hid.ctrl(0x21, 0x09, report, int(hid.info.Interface), data, 1000)
+	time.Sleep(100 * time.Millisecond)
 	return err
+}
+
+func (hid *usbDevice) SetFeatureReport(report int, data []byte) error {
+	return hid.SetReport((3<<8)|report, data)
+}
+
+func (hid *usbDevice) SetOutputReport(report int, data []byte) error {
+	return hid.SetReport((2<<8)|report, data)
 }
 
 //

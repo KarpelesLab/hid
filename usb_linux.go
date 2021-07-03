@@ -17,8 +17,6 @@ import (
 type usbDevice struct {
 	info Info
 
-	f *os.File
-
 	epIn  int
 	epOut int
 
@@ -28,18 +26,25 @@ type usbDevice struct {
 	path string
 }
 
-func (hid *usbDevice) Open() (err error) {
-	if hid.f != nil {
-		return errors.New("device is already opened")
-	}
-	if hid.f, err = os.OpenFile(hid.path, os.O_RDWR, 0644); err != nil {
-		return
-	} else {
-		return hid.claim()
-	}
+type usbHandle struct {
+	dev *usbDevice
+	f   *os.File
 }
 
-func (hid *usbDevice) Close() error {
+func (hid *usbDevice) Open() (Handle, error) {
+	f, err := os.OpenFile(hid.path, os.O_RDWR, 0644)
+	if err != nil {
+		return nil, err
+	}
+	h := &usbHandle{dev: hid, f: f}
+	if err = h.claim(); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return h, nil
+}
+
+func (hid *usbHandle) Close() error {
 	if hid.f != nil {
 		hid.release()
 		hid.f.Close()
@@ -52,7 +57,7 @@ func (hid *usbDevice) Info() Info {
 	return hid.info
 }
 
-func (hid *usbDevice) ioctl(n uint32, arg interface{}) (int, error) {
+func (hid *usbHandle) ioctl(n uint32, arg interface{}) (int, error) {
 	b := new(bytes.Buffer)
 	if err := binary.Write(b, binary.LittleEndian, arg); err != nil {
 		return -1, err
@@ -63,8 +68,8 @@ func (hid *usbDevice) ioctl(n uint32, arg interface{}) (int, error) {
 	return int(r), err
 }
 
-func (hid *usbDevice) claim() error {
-	ifno := uint32(hid.info.Interface)
+func (hid *usbHandle) claim() error {
+	ifno := uint32(hid.dev.info.Interface)
 	if r, errno := hid.ioctl(USBDEVFS_IOCTL, &usbfsIoctl{
 		Interface: ifno,
 		IoctlCode: USBDEVFS_DISCONNECT,
@@ -80,8 +85,8 @@ func (hid *usbDevice) claim() error {
 	return nil
 }
 
-func (hid *usbDevice) release() error {
-	ifno := uint32(hid.info.Interface)
+func (hid *usbHandle) release() error {
+	ifno := uint32(hid.dev.info.Interface)
 	if r, errno := hid.ioctl(USBDEVFS_RELEASE, &ifno); r == -1 {
 		return errno
 	}
@@ -96,11 +101,11 @@ func (hid *usbDevice) release() error {
 	return nil
 }
 
-func (hid *usbDevice) Ctrl(rtype, req, val, index int, data []byte, t int) (int, error) {
+func (hid *usbHandle) Ctrl(rtype, req, val, index int, data []byte, t int) (int, error) {
 	return hid.ctrl(rtype, req, val, index, data, t)
 }
 
-func (hid *usbDevice) ctrl(rtype, req, val, index int, data []byte, t int) (int, error) {
+func (hid *usbHandle) ctrl(rtype, req, val, index int, data []byte, t int) (int, error) {
 	s := usbfsCtrl{
 		ReqType: uint8(rtype),
 		Req:     uint8(req),
@@ -117,7 +122,7 @@ func (hid *usbDevice) ctrl(rtype, req, val, index int, data []byte, t int) (int,
 	}
 }
 
-func (hid *usbDevice) intr(ep int, data []byte, t int) (int, error) {
+func (hid *usbHandle) intr(ep int, data []byte, t int) (int, error) {
 	if r, err := hid.ioctl(USBDEVFS_BULK, &usbfsBulk{
 		Endpoint: uint32(ep),
 		Len:      uint32(len(data)),
@@ -130,8 +135,8 @@ func (hid *usbDevice) intr(ep int, data []byte, t int) (int, error) {
 	}
 }
 
-func (hid *usbDevice) ReadInputPacket(timeout time.Duration) ([]byte, error) {
-	buf := make([]byte, hid.inputPacketSize)
+func (hid *usbHandle) ReadInputPacket(timeout time.Duration) ([]byte, error) {
+	buf := make([]byte, hid.dev.inputPacketSize)
 	n, err := hid.Read(buf, timeout)
 	if err != nil {
 		return nil, err
@@ -139,24 +144,24 @@ func (hid *usbDevice) ReadInputPacket(timeout time.Duration) ([]byte, error) {
 	return buf[:n], nil
 }
 
-func (hid *usbDevice) Read(data []byte, timeout time.Duration) (int, error) {
+func (hid *usbHandle) Read(data []byte, timeout time.Duration) (int, error) {
 	ms := timeout / (1 * time.Millisecond)
-	return hid.intr(hid.epIn, data, int(ms))
+	return hid.intr(hid.dev.epIn, data, int(ms))
 }
 
-func (hid *usbDevice) Write(data []byte, timeout time.Duration) (int, error) {
-	if hid.epOut > 0 {
+func (hid *usbHandle) Write(data []byte, timeout time.Duration) (int, error) {
+	if hid.dev.epOut > 0 {
 		ms := timeout / (1 * time.Millisecond)
-		return hid.intr(hid.epOut, data, int(ms))
+		return hid.intr(hid.dev.epOut, data, int(ms))
 	} else {
-		return hid.ctrl(0x21, 0x09, 2<<8+0, int(hid.info.Interface), data, len(data))
+		return hid.ctrl(0x21, 0x09, 2<<8+0, int(hid.dev.info.Interface), data, len(data))
 	}
 }
 
-func (hid *usbDevice) HIDReport() ([]byte, error) {
+func (hid *usbHandle) HIDReport() ([]byte, error) {
 	buf := make([]byte, 256, 256)
 	// In transfer, recepient interface, GetDescriptor, HidReport type
-	n, err := hid.ctrl(0x81, 0x06, 0x22<<8+int(hid.info.Interface), 0, buf, 1000)
+	n, err := hid.ctrl(0x81, 0x06, 0x22<<8+int(hid.dev.info.Interface), 0, buf, 1000)
 	if err != nil {
 		return nil, err
 	} else {
@@ -164,10 +169,14 @@ func (hid *usbDevice) HIDReport() ([]byte, error) {
 	}
 }
 
-func (hid *usbDevice) GetReport(report int) ([]byte, error) {
-	buf := make([]byte, 256, 256)
+func (hid *usbHandle) GetFeatureReport(report int) ([]byte, error) {
+	return hid.GetReport((3 << 8) | report)
+}
+
+func (hid *usbHandle) GetReport(report int) ([]byte, error) {
+	buf := make([]byte, 256)
 	// 10100001, GET_REPORT, type*256+id, intf, len, data
-	n, err := hid.ctrl(0xa1, 0x01, 3<<8+report, int(hid.info.Interface), buf, 1000)
+	n, err := hid.ctrl(0xa1, 0x01, report, int(hid.dev.info.Interface), buf, 1000)
 	if err != nil {
 		return nil, err
 	} else {
@@ -175,17 +184,17 @@ func (hid *usbDevice) GetReport(report int) ([]byte, error) {
 	}
 }
 
-func (hid *usbDevice) SetReport(report int, data []byte) error {
+func (hid *usbHandle) SetReport(report int, data []byte) error {
 	// 00100001, SET_REPORT, type*256+id, intf, len, data
-	_, err := hid.ctrl(0x21, 0x09, report, int(hid.info.Interface), data, 1000)
+	_, err := hid.ctrl(0x21, 0x09, report, int(hid.dev.info.Interface), data, 1000)
 	return err
 }
 
-func (hid *usbDevice) SetFeatureReport(report int, data []byte) error {
+func (hid *usbHandle) SetFeatureReport(report int, data []byte) error {
 	return hid.SetReport((3<<8)|report, data)
 }
 
-func (hid *usbDevice) SetOutputReport(report int, data []byte) error {
+func (hid *usbHandle) SetOutputReport(report int, data []byte) error {
 	return hid.SetReport((2<<8)|report, data)
 }
 

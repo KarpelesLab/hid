@@ -26,14 +26,15 @@ type Info struct {
 // A common HID device interace
 //
 type Device interface {
-	Open() error
-	Close() error
+	Open() (Handle, error)
 	Info() Info
+}
+
+type Handle interface {
+	Close() error
 	HIDReport() ([]byte, error)
-	SetReport(int, []byte) error
-	SetOutputReport(int, []byte) error
 	SetFeatureReport(int, []byte) error
-	GetReport(int) ([]byte, error)
+	GetFeatureReport(int) ([]byte, error)
 	ReadInputPacket(timeout time.Duration) ([]byte, error)
 	Read(buf []byte, ms time.Duration) (int, error)
 	Write(data []byte, ms time.Duration) (int, error)

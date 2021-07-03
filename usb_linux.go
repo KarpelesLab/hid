@@ -126,7 +126,6 @@ func (hid *usbDevice) intr(ep int, data []byte, t int) (int, error) {
 	}); r == -1 {
 		return -1, err
 	} else {
-		time.Sleep(100 * time.Millisecond)
 		return r, nil
 	}
 }
@@ -179,7 +178,6 @@ func (hid *usbDevice) GetReport(report int) ([]byte, error) {
 func (hid *usbDevice) SetReport(report int, data []byte) error {
 	// 00100001, SET_REPORT, type*256+id, intf, len, data
 	_, err := hid.ctrl(0x21, 0x09, report, int(hid.info.Interface), data, 1000)
-	time.Sleep(100 * time.Millisecond)
 	return err
 }
 
